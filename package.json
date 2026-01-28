@@ -1,5 +1,5 @@
 {
-  "name": "cocofinoexe",
+  "name": "spitikoexe",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -16,8 +16,8 @@
     "electron-builder": "^24.9.1"
   },
   "build": {
-    "appId": "com.cocofinoexe.app",
-    "productName": "CocofinoExe",
+    "appId": "com.spitikoexe.app",
+    "productName": "SpitikoExe",
     "win": {
       "target": [
         {
