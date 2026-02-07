@@ -9,7 +9,7 @@ app.commandLine.appendSwitch("enable-features", "AutoplayIgnoreWebAudio");
 let mainWindow;
 
 function createWindow() {
-  const url = "https://www.e-spitiko.gr";
+  const url = "http://localhost:3000/admin";
 
   // Create the browser window in fullscreen mode
   mainWindow = new BrowserWindow({
@@ -96,17 +96,64 @@ app.on("window-all-closed", () => {
   }
 });
 
-// Silent printing handler
-ipcMain.on("print-invoice", (event, options) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-
-  if (win) {
-    win.webContents.print({
-      silent: options.silent !== undefined ? options.silent : true,
-      printBackground:
-        options.printBackground !== undefined ? options.printBackground : true,
-      deviceName: options.deviceName || "",
+// Handler for printing PDFs silently
+ipcMain.on('print-pdf', async (event, { pdfData, silent, printBackground, deviceName, paperSize }) => {
+  try {
+    // Convert base64 to buffer
+    const pdfBuffer = Buffer.from(pdfData, 'base64');
+    
+    // Create temporary file
+    const tempDir = app.getPath('temp');
+    const tempFilePath = path.join(tempDir, `invoice-${Date.now()}.pdf`);
+    
+    // Write PDF to temp file
+    fs.writeFileSync(tempFilePath, pdfBuffer);
+    
+    // Create a hidden BrowserWindow
+    const printWindow = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        plugins: true,
+      },
     });
+    
+    // Load PDF using data URL
+    const dataUrl = `data:application/pdf;base64,${pdfData}`;
+    await printWindow.loadURL(dataUrl);
+    
+    // Wait for PDF to load
+    await new Promise((resolve) => {
+      printWindow.webContents.once('did-finish-load', resolve);
+      setTimeout(resolve, 3000); // Fallback timeout
+    });
+    
+    // Print silently
+    printWindow.webContents.print({
+      silent: true, // CRITICAL: Force silent
+      printBackground: printBackground !== false,
+      deviceName: deviceName || undefined,
+    }, (success, failureReason) => {
+      if (success) {
+        console.log('✅ PDF printed successfully');
+      } else {
+        console.error('❌ PDF print failed:', failureReason);
+      }
+      
+      // Clean up
+      printWindow.close();
+      setTimeout(() => {
+        try {
+          fs.unlinkSync(tempFilePath);
+        } catch (err) {
+          console.warn('Failed to delete temp file:', err);
+        }
+      }, 1000);
+    });
+    
+  } catch (error) {
+    console.error('❌ Error printing PDF:', error);
   }
 });
 

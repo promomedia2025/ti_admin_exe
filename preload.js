@@ -118,4 +118,41 @@ contextBridge.exposeInMainWorld("electron", {
       };
     }
   },
+
+  // IPC Renderer methods - CRITICAL for PDF printing
+  ipcRenderer: {
+    // Send a message to the main process (fire and forget)
+    send: (channel, ...args) => {
+      // Whitelist channels for security
+      const validChannels = ['window-focus', 'print-pdf', 'print-invoice'];
+      if (validChannels.includes(channel)) {
+        ipcRenderer.send(channel, ...args);
+      } else {
+        console.warn(`[PRELOAD] Blocked IPC channel: ${channel}`);
+      }
+    },
+
+    // Invoke a method in the main process and wait for response
+    invoke: (channel, ...args) => {
+      // Whitelist channels for security
+      const validChannels = ['window-focus', 'focus-window'];
+      if (validChannels.includes(channel)) {
+        return ipcRenderer.invoke(channel, ...args);
+      }
+      return Promise.reject(new Error(`Invalid channel: ${channel}`));
+    },
+
+    // Listen for messages from main process
+    on: (channel, func) => {
+      const validChannels = ['window-focus-response', 'autofill-data'];
+      if (validChannels.includes(channel)) {
+        ipcRenderer.on(channel, (event, ...args) => func(...args));
+      }
+    },
+
+    // Remove listener
+    removeListener: (channel, func) => {
+      ipcRenderer.removeListener(channel, func);
+    },
+  },
 });
