@@ -3,6 +3,9 @@ const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
 
+// Get app version
+const appVersion = app.getVersion();
+
 // Configure command line switches to allow autoplay and audio without user gesture
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 app.commandLine.appendSwitch("enable-features", "AutoplayIgnoreWebAudio");
@@ -141,11 +144,22 @@ function createWindow() {
     },
   });
 
+  // Set window title with version
+  mainWindow.setTitle(`SpitikoExe v${appVersion}`);
+
   // Load the URL
   mainWindow.loadURL(url);
 
   // Open DevTools (optional - remove this line if you don't want DevTools)
   // mainWindow.webContents.openDevTools();
+
+  // Add keyboard shortcut to show About dialog (F1 or Ctrl+I)
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F1' || (input.control && input.key.toLowerCase() === 'i')) {
+      event.preventDefault();
+      showAboutDialog();
+    }
+  });
 
   // Send autofill data to renderer
   mainWindow.webContents.once("did-finish-load", () => {
@@ -179,6 +193,37 @@ function focusWindow() {
   mainWindow.show();
 }
 
+// Function to show About/Version dialog
+function showAboutDialog() {
+  const productName = app.getName();
+  const version = app.getVersion();
+  const electronVersion = process.versions.electron;
+  const chromeVersion = process.versions.chrome;
+  const nodeVersion = process.versions.node;
+  
+  dialog.showMessageBox(mainWindow || null, {
+    type: 'info',
+    title: 'About',
+    message: `${productName}`,
+    detail: `Version: ${version}\n\n` +
+            `Electron: ${electronVersion}\n` +
+            `Chrome: ${chromeVersion}\n` +
+            `Node.js: ${nodeVersion}\n\n` +
+            `To check for updates, the app automatically checks on startup and every 4 hours.`,
+    buttons: ['Check for Updates', 'OK'],
+    defaultId: 1,
+    cancelId: 1
+  }).then((result) => {
+    if (result.response === 0) {
+      // User clicked "Check for Updates"
+      autoUpdater.checkForUpdates().catch(err => {
+        dialog.showErrorBox('Update Check Failed', 
+          'Unable to check for updates. Please check your internet connection.');
+      });
+    }
+  });
+}
+
 // Configure auto-updater
 autoUpdater.autoDownload = false; // Don't auto-download, let user choose
 autoUpdater.autoInstallOnAppQuit = true; // Auto-install on app quit
@@ -205,7 +250,26 @@ autoUpdater.on('checking-for-update', () => {
 
 autoUpdater.on('update-available', (info) => {
   console.log('✅ Update available:', info.version);
-  // Send update available notification to renderer
+  // Show native dialog to user
+  dialog.showMessageBox(mainWindow || null, {
+    type: 'info',
+    title: 'Update Available',
+    message: `A new version (${info.version}) is available!`,
+    detail: 'Would you like to download and install it now?',
+    buttons: ['Download Now', 'Later'],
+    defaultId: 0,
+    cancelId: 1
+  }).then((result) => {
+    if (result.response === 0) {
+      // User clicked "Download Now"
+      console.log('📥 User chose to download update');
+      autoUpdater.downloadUpdate();
+    } else {
+      console.log('⏸️ User chose to download later');
+    }
+  });
+  
+  // Also send to renderer if needed
   if (mainWindow) {
     mainWindow.webContents.send('update-available', info);
   }
@@ -233,6 +297,13 @@ autoUpdater.on('error', (err) => {
 autoUpdater.on('download-progress', (progressObj) => {
   const message = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
   console.log('📥 Download progress:', message);
+  
+  // Update window title with progress (non-intrusive)
+  if (mainWindow) {
+    const percent = Math.round(progressObj.percent);
+    mainWindow.setTitle(`SpitikoExe - Downloading update ${percent}%`);
+  }
+  
   if (mainWindow) {
     mainWindow.webContents.send('download-progress', progressObj);
   }
@@ -240,11 +311,35 @@ autoUpdater.on('download-progress', (progressObj) => {
 
 autoUpdater.on('update-downloaded', (info) => {
   console.log('✅ Update downloaded:', info.version);
+  
+  // Restore window title
+  if (mainWindow) {
+    mainWindow.setTitle(`SpitikoExe v${appVersion}`);
+  }
+  
+  // Show dialog asking user to restart
+  dialog.showMessageBox(mainWindow || null, {
+    type: 'info',
+    title: 'Update Ready',
+    message: `Update ${info.version} has been downloaded!`,
+    detail: 'The update will be installed when you restart the application. Would you like to restart now?',
+    buttons: ['Restart Now', 'Later'],
+    defaultId: 0,
+    cancelId: 1
+  }).then((result) => {
+    if (result.response === 0) {
+      // User clicked "Restart Now"
+      console.log('🔄 User chose to restart and install update');
+      autoUpdater.quitAndInstall(false, true);
+    } else {
+      console.log('⏸️ User chose to install later');
+      // Update will be installed automatically when app quits
+    }
+  });
+  
   if (mainWindow) {
     mainWindow.webContents.send('update-downloaded', info);
   }
-  // Auto-install on quit
-  autoUpdater.quitAndInstall(false, true);
 });
 
 // IPC handlers for update control
@@ -295,6 +390,21 @@ ipcMain.handle('save-domain', async (event, domain) => {
 
 ipcMain.handle('get-saved-domain', async () => {
   return getSavedDomain();
+});
+
+ipcMain.handle('get-app-version', async () => {
+  return {
+    version: app.getVersion(),
+    name: app.getName(),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node
+  };
+});
+
+ipcMain.handle('show-about', async () => {
+  showAboutDialog();
+  return { success: true };
 });
 
 ipcMain.on('settings-saved', () => {

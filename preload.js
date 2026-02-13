@@ -140,7 +140,7 @@ contextBridge.exposeInMainWorld("electron", {
     // Invoke a method in the main process and wait for response
     invoke: (channel, ...args) => {
       // Whitelist channels for security
-      const validChannels = ['window-focus', 'focus-window', 'check-for-updates', 'download-update', 'install-update', 'get-printers'];
+      const validChannels = ['window-focus', 'focus-window', 'check-for-updates', 'download-update', 'install-update', 'get-printers', 'get-app-version', 'show-about'];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, ...args);
       }
@@ -198,5 +198,15 @@ contextBridge.exposeInMainWorld("electron", {
     onUpdateDownloaded: (callback) => {
       ipcRenderer.on('update-downloaded', (event, info) => callback(info));
     },
+  },
+
+  // Get app version information
+  getAppVersion: async () => {
+    return ipcRenderer.invoke('get-app-version');
+  },
+
+  // Show About dialog
+  showAbout: async () => {
+    return ipcRenderer.invoke('show-about');
   },
 });
