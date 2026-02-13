@@ -12,8 +12,8 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
-    "electron": "^39.2.4",
-    "electron-builder": "^24.9.1"
+    "electron": "^22.3.27",
+    "electron-builder": "^23.6.0"
   },
   "build": {
     "appId": "com.spitikoexe.app",
@@ -27,16 +27,26 @@
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "promomedia2025",
+      "repo": "ti_admin_exe",
+      "private": true
     },
     "files": [
       "**/*",
       "!node_modules/**/*",
       "node_modules/electron/**/*"
     ]
+  },
+  "dependencies": {
+    "pdf-to-printer": "^5.6.1"
   }
 }

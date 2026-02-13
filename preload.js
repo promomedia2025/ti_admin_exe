@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld("electron", {
   focusWindow: () => {
     return ipcRenderer.invoke("focus-window");
   },
+  
+  // Get list of available printers
+  getPrinters: async () => {
+    return ipcRenderer.invoke("get-printers");
+  },
 
   /**
    * Play an MP3 notification sound and stop it after 6 seconds (default).
@@ -135,7 +140,7 @@ contextBridge.exposeInMainWorld("electron", {
     // Invoke a method in the main process and wait for response
     invoke: (channel, ...args) => {
       // Whitelist channels for security
-      const validChannels = ['window-focus', 'focus-window'];
+      const validChannels = ['window-focus', 'focus-window', 'get-printers'];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, ...args);
       }
