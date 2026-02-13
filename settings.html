@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Application Settings</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+            font-weight: 600;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            color: #333;
+            margin-bottom: 8px;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .help-text {
+            color: #888;
+            font-size: 12px;
+            margin-top: 6px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 30px;
+        }
+        
+        button {
+            flex: 1;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+        
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+        
+        .error-message {
+            background: #fee;
+            color: #c33;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .success-message {
+            background: #efe;
+            color: #3c3;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .example-url {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 8px;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .example-url strong {
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Application Settings</h1>
+        <p class="subtitle">Configure your application URL</p>
+        
+        <div id="errorMessage" class="error-message"></div>
+        <div id="successMessage" class="success-message"></div>
+        
+        <form id="settingsForm">
+            <div class="form-group">
+                <label for="domain">Domain or Host</label>
+                <input 
+                    type="text" 
+                    id="domain" 
+                    name="domain" 
+                    placeholder="localhost:3000"
+                    required
+                    autofocus
+                />
+                <div class="help-text">
+                    Enter the domain or host (e.g., localhost:3000, example.com, 192.168.1.100:3000)
+                </div>
+                <div class="example-url">
+                    <strong>Example URLs:</strong><br>
+                    • localhost:3000 → https://localhost:3000/admin<br>
+                    • example.com → https://example.com/admin<br>
+                    • 192.168.1.100:3000 → https://192.168.1.100:3000/admin
+                </div>
+            </div>
+            
+            <div class="button-group">
+                <button type="button" class="btn-secondary" id="cancelBtn">Cancel</button>
+                <button type="submit" class="btn-primary">Save & Continue</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        
+        // Load existing domain if available
+        window.addEventListener('DOMContentLoaded', () => {
+            ipcRenderer.invoke('get-saved-domain').then(domain => {
+                if (domain && domain !== 'localhost:3000') {
+                    document.getElementById('domain').value = domain;
+                }
+            });
+        });
+        
+        const form = document.getElementById('settingsForm');
+        const errorMessage = document.getElementById('errorMessage');
+        const successMessage = document.getElementById('successMessage');
+        const domainInput = document.getElementById('domain');
+        
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
+            successMessage.style.display = 'none';
+        }
+        
+        function showSuccess(message) {
+            successMessage.textContent = message;
+            successMessage.style.display = 'block';
+            errorMessage.style.display = 'none';
+        }
+        
+        function validateDomain(domain) {
+            if (!domain || domain.trim() === '') {
+                return 'Please enter a domain';
+            }
+            
+            // Remove protocol and path if user included them
+            let cleaned = domain.trim()
+                .replace(/^https?:\/\//i, '')
+                .replace(/\/admin\/?$/i, '')
+                .trim();
+            
+            if (cleaned === '') {
+                return 'Please enter a valid domain';
+            }
+            
+            return null;
+        }
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const domain = domainInput.value.trim();
+            const validationError = validateDomain(domain);
+            
+            if (validationError) {
+                showError(validationError);
+                return;
+            }
+            
+            try {
+                // Clean the domain
+                let cleanedDomain = domain
+                    .replace(/^https?:\/\//i, '')
+                    .replace(/\/admin\/?$/i, '')
+                    .trim();
+                
+                // Save the domain
+                await ipcRenderer.invoke('save-domain', cleanedDomain);
+                
+                showSuccess('Settings saved successfully! Loading application...');
+                
+                // Wait a moment then close settings and load main app
+                setTimeout(() => {
+                    ipcRenderer.send('settings-saved');
+                }, 1000);
+            } catch (error) {
+                showError('Failed to save settings: ' + error.message);
+            }
+        });
+        
+        document.getElementById('cancelBtn').addEventListener('click', () => {
+            ipcRenderer.send('settings-cancelled');
+        });
+    </script>
+</body>
+</html>

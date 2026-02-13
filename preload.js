@@ -140,7 +140,7 @@ contextBridge.exposeInMainWorld("electron", {
     // Invoke a method in the main process and wait for response
     invoke: (channel, ...args) => {
       // Whitelist channels for security
-      const validChannels = ['window-focus', 'focus-window', 'get-printers'];
+      const validChannels = ['window-focus', 'focus-window', 'check-for-updates', 'download-update', 'install-update', 'get-printers'];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, ...args);
       }
@@ -149,7 +149,7 @@ contextBridge.exposeInMainWorld("electron", {
 
     // Listen for messages from main process
     on: (channel, func) => {
-      const validChannels = ['window-focus-response', 'autofill-data'];
+      const validChannels = ['window-focus-response', 'autofill-data', 'update-available', 'update-not-available', 'update-error', 'download-progress', 'update-downloaded'];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, (event, ...args) => func(...args));
       }
@@ -158,6 +158,45 @@ contextBridge.exposeInMainWorld("electron", {
     // Remove listener
     removeListener: (channel, func) => {
       ipcRenderer.removeListener(channel, func);
+    },
+  },
+
+  // Auto-updater methods
+  updater: {
+    // Check for updates
+    checkForUpdates: () => {
+      return ipcRenderer.invoke('check-for-updates');
+    },
+    
+    // Download update
+    downloadUpdate: () => {
+      return ipcRenderer.invoke('download-update');
+    },
+    
+    // Install update (will restart app)
+    installUpdate: () => {
+      return ipcRenderer.invoke('install-update');
+    },
+    
+    // Listen for update events
+    onUpdateAvailable: (callback) => {
+      ipcRenderer.on('update-available', (event, info) => callback(info));
+    },
+    
+    onUpdateNotAvailable: (callback) => {
+      ipcRenderer.on('update-not-available', () => callback());
+    },
+    
+    onUpdateError: (callback) => {
+      ipcRenderer.on('update-error', (event, error) => callback(error));
+    },
+    
+    onDownloadProgress: (callback) => {
+      ipcRenderer.on('download-progress', (event, progress) => callback(progress));
+    },
+    
+    onUpdateDownloaded: (callback) => {
+      ipcRenderer.on('update-downloaded', (event, info) => callback(info));
     },
   },
 });

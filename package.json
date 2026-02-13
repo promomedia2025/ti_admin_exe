@@ -12,8 +12,11 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
-    "electron": "^22.3.27",
-    "electron-builder": "^23.6.0"
+    "electron": "^39.2.4",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "electron-updater": "^6.7.3"
   },
   "build": {
     "appId": "com.spitikoexe.app",
@@ -27,12 +30,12 @@
           ]
         }
       ],
-      "icon": "build/icon.png",
-      "requestedExecutionLevel": "asInvoker"
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh"
     },
     "publish": {
       "provider": "github",
@@ -42,11 +45,8 @@
     },
     "files": [
       "**/*",
-      "!node_modules/**/*",
-      "node_modules/electron/**/*"
+      "!node_modules/electron-builder/**/*",
+      "!node_modules/@electron/**/*"
     ]
-  },
-  "dependencies": {
-    "pdf-to-printer": "^5.6.1"
   }
 }
