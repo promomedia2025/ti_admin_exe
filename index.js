@@ -145,7 +145,7 @@ function createWindow() {
   });
 
   // Set window title with version
-  mainWindow.setTitle(`SpitikoExe v${appVersion}`);
+  mainWindow.setTitle(`Promo Media v${appVersion}`);
 
   // Load the URL
   mainWindow.loadURL(url);
@@ -283,7 +283,7 @@ autoUpdater.on('update-available', (info) => {
   
   // Update window title to show update is downloading (non-intrusive)
   if (mainWindow) {
-    mainWindow.setTitle(`SpitikoExe v${appVersion} - Update available, downloading...`);
+    mainWindow.setTitle(`Promo Media v${appVersion} - Update available, downloading...`);
   }
   
   // Send to renderer if needed
@@ -339,7 +339,7 @@ autoUpdater.on('download-progress', (progressObj) => {
   // Update window title with progress (non-intrusive)
   if (mainWindow) {
     const percent = Math.round(progressObj.percent);
-    mainWindow.setTitle(`SpitikoExe - Downloading update ${percent}%`);
+    mainWindow.setTitle(`Promo Media - Downloading update ${percent}%`);
   }
   
   if (mainWindow) {
@@ -352,7 +352,7 @@ autoUpdater.on('update-downloaded', (info) => {
   
   // Restore window title
   if (mainWindow) {
-    mainWindow.setTitle(`SpitikoExe v${appVersion} - Update ready, will install on restart`);
+    mainWindow.setTitle(`Promo Media v${appVersion} - Update ready, will install on restart`);
   }
   
   // Show non-blocking notification (optional - can be removed for completely silent updates)
