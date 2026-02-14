@@ -216,17 +216,45 @@ function showAboutDialog() {
   }).then((result) => {
     if (result.response === 0) {
       // User clicked "Check for Updates"
+      console.log('🔍 Manual update check triggered');
       autoUpdater.checkForUpdates().catch(err => {
-        dialog.showErrorBox('Update Check Failed', 
-          'Unable to check for updates. Please check your internet connection.');
+        console.error('❌ Manual update check failed:', err);
+        const errorMessage = err.message || err.toString();
+        dialog.showMessageBox(mainWindow || null, {
+          type: 'error',
+          title: 'Update Check Failed',
+          message: 'Unable to check for updates',
+          detail: `Error: ${errorMessage}\n\n` +
+                  `Check the console (F12) for more details.\n` +
+                  `Common issues:\n` +
+                  `• GitHub API access\n` +
+                  `• Network connectivity\n` +
+                  `• Firewall blocking`,
+          buttons: ['OK'],
+        });
       });
     }
   });
 }
 
-// Configure auto-updater
-autoUpdater.autoDownload = false; // Don't auto-download, let user choose
+// Configure auto-updater - FULLY AUTOMATIC
+autoUpdater.autoDownload = true; // Automatically download updates
 autoUpdater.autoInstallOnAppQuit = true; // Auto-install on app quit
+
+// Configure update server (GitHub)
+if (app.isPackaged) {
+  // electron-updater automatically detects GitHub provider from package.json
+  // For private repos, it uses GitHub API which requires authentication
+  console.log('📦 App is packaged, update server configured from package.json');
+  try {
+    const feedURL = autoUpdater.getFeedURL();
+    console.log('📦 Update server URL:', feedURL);
+  } catch (err) {
+    console.log('📦 Update server will be auto-detected from GitHub');
+  }
+} else {
+  console.log('⚠️ App is not packaged, update checks disabled in development');
+}
 
 // Set cache directory to user data directory to avoid temp file permission issues
 if (app.isPackaged) {
@@ -250,26 +278,15 @@ autoUpdater.on('checking-for-update', () => {
 
 autoUpdater.on('update-available', (info) => {
   console.log('✅ Update available:', info.version);
-  // Show native dialog to user
-  dialog.showMessageBox(mainWindow || null, {
-    type: 'info',
-    title: 'Update Available',
-    message: `A new version (${info.version}) is available!`,
-    detail: 'Would you like to download and install it now?',
-    buttons: ['Download Now', 'Later'],
-    defaultId: 0,
-    cancelId: 1
-  }).then((result) => {
-    if (result.response === 0) {
-      // User clicked "Download Now"
-      console.log('📥 User chose to download update');
-      autoUpdater.downloadUpdate();
-    } else {
-      console.log('⏸️ User chose to download later');
-    }
-  });
+  // Automatically download - no user prompt needed
+  console.log('📥 Automatically downloading update...');
   
-  // Also send to renderer if needed
+  // Update window title to show update is downloading (non-intrusive)
+  if (mainWindow) {
+    mainWindow.setTitle(`SpitikoExe v${appVersion} - Update available, downloading...`);
+  }
+  
+  // Send to renderer if needed
   if (mainWindow) {
     mainWindow.webContents.send('update-available', info);
   }
@@ -284,11 +301,32 @@ autoUpdater.on('update-not-available', (info) => {
 
 autoUpdater.on('error', (err) => {
   console.error('❌ Error in auto-updater:', err);
+  console.error('❌ Error details:', JSON.stringify(err, null, 2));
+  
   // Don't show temp file errors to users - they're usually non-critical
   if (err.message && err.message.includes('temp') && err.message.includes('write')) {
     console.warn('⚠️ Temp file write error (non-critical):', err.message);
     return; // Silently ignore temp file write errors
   }
+  
+  // Show detailed error to user
+  const errorMessage = err.message || err.toString();
+  const errorDetails = err.stack || '';
+  
+  dialog.showMessageBox(mainWindow || null, {
+    type: 'error',
+    title: 'Update Check Failed',
+    message: 'Unable to check for updates',
+    detail: `Error: ${errorMessage}\n\n` +
+            `This could be due to:\n` +
+            `• Network connectivity issues\n` +
+            `• Firewall blocking GitHub\n` +
+            `• GitHub API rate limiting\n` +
+            `• Repository access issues\n\n` +
+            `Check the console for more details.`,
+    buttons: ['OK'],
+  });
+  
   if (mainWindow) {
     mainWindow.webContents.send('update-error', err.message);
   }
@@ -314,28 +352,25 @@ autoUpdater.on('update-downloaded', (info) => {
   
   // Restore window title
   if (mainWindow) {
-    mainWindow.setTitle(`SpitikoExe v${appVersion}`);
+    mainWindow.setTitle(`SpitikoExe v${appVersion} - Update ready, will install on restart`);
   }
   
-  // Show dialog asking user to restart
-  dialog.showMessageBox(mainWindow || null, {
-    type: 'info',
-    title: 'Update Ready',
-    message: `Update ${info.version} has been downloaded!`,
-    detail: 'The update will be installed when you restart the application. Would you like to restart now?',
-    buttons: ['Restart Now', 'Later'],
-    defaultId: 0,
-    cancelId: 1
-  }).then((result) => {
-    if (result.response === 0) {
-      // User clicked "Restart Now"
-      console.log('🔄 User chose to restart and install update');
-      autoUpdater.quitAndInstall(false, true);
-    } else {
-      console.log('⏸️ User chose to install later');
-      // Update will be installed automatically when app quits
-    }
-  });
+  // Show non-blocking notification (optional - can be removed for completely silent updates)
+  // Update will install automatically when app quits (autoInstallOnAppQuit = true)
+  console.log('✅ Update ready. Will install automatically when application closes.');
+  
+  // Optional: Show a brief notification (non-blocking)
+  if (mainWindow) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Update Ready',
+      message: `Update ${info.version} downloaded successfully!`,
+      detail: 'The update will be installed automatically when you close the application.',
+      buttons: ['OK'],
+    }).catch(() => {
+      // Ignore if window is closed
+    });
+  }
   
   if (mainWindow) {
     mainWindow.webContents.send('update-downloaded', info);
