@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, protocol, dialog } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
 const fs = require("fs");
+const ptp = require("pdf-to-printer");
 
 // Get app version
 const appVersion = app.getVersion();
@@ -75,7 +76,7 @@ function deleteSavedDomain() {
 // Function to get the configured URL
 function getConfiguredURL() {
   const defaultDomain = "localhost:3000";
-  const protocol = "https://";
+  const protocol = "http://";
   const urlPath = "/admin";
   
   const savedDomain = getSavedDomain();
@@ -117,7 +118,57 @@ function createSettingsWindow() {
 }
 
 function createWindow() {
-  // Check if domain is configured
+  // In development, always use default domain (skip settings)
+  if (!app.isPackaged) {
+    console.log("🔧 Development mode: using default domain");
+    const url = getConfiguredURL();
+    
+    // Create the browser window in fullscreen mode
+    mainWindow = new BrowserWindow({
+      width: 1920,
+      height: 1080,
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: false,
+        preload: path.join(__dirname, "preload.js"),
+        // Allow autoplay in media elements
+        autoplayPolicy: "no-user-gesture-required",
+      },
+    });
+
+    // Set window title with version
+    mainWindow.setTitle(`Promo Media v${appVersion}`);
+
+    // Load the URL
+    mainWindow.loadURL(url);
+
+    // Open DevTools (optional - remove this line if you don't want DevTools)
+    // mainWindow.webContents.openDevTools();
+
+    // Add keyboard shortcut to show About dialog (F1 or Ctrl+I)
+    mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'F1') {
+        event.preventDefault();
+        showAboutDialog();
+      }
+    });
+
+    // Send autofill data to renderer
+    mainWindow.webContents.once("did-finish-load", () => {
+      mainWindow.webContents.send("autofill-data", {
+        username: "savedUsername",
+        password: "savedPassword",
+      });
+    });
+
+    mainWindow.on("closed", () => {
+      mainWindow = null;
+    });
+    return;
+  }
+
+  // Production mode: Check if domain is configured
   const savedDomain = getSavedDomain();
   
   if (!savedDomain) {
@@ -537,9 +588,15 @@ app.on("window-all-closed", () => {
   }
 });
 
-// Handler for printing PDFs silently
-ipcMain.on('print-pdf', async (event, { pdfData, silent, printBackground, deviceName, paperSize }) => {
+// Shared print function for both print-pdf and print-invoice
+async function handlePrint(options) {
+  const { pdfData, silent = true, printBackground, deviceName, paperSize } = options;
+  
   try {
+    console.log('🖨️ Print request received - Full options:', JSON.stringify(options, null, 2));
+    console.log('🖨️ Extracted deviceName:', deviceName, '(type:', typeof deviceName, ')');
+    console.log('🖨️ Extracted paperSize:', paperSize, '(type:', typeof paperSize, ')');
+    
     // Convert base64 to buffer
     const pdfBuffer = Buffer.from(pdfData, 'base64');
     
@@ -549,53 +606,119 @@ ipcMain.on('print-pdf', async (event, { pdfData, silent, printBackground, device
     
     // Write PDF to temp file
     fs.writeFileSync(tempFilePath, pdfBuffer);
+    console.log('📄 PDF saved to temp file:', tempFilePath);
+    console.log('📄 PDF file size:', pdfBuffer.length, 'bytes');
     
-    // Create a hidden BrowserWindow
-    const printWindow = new BrowserWindow({
-      show: false,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        plugins: true,
-      },
-    });
+    // Check PDF dimensions by reading the PDF header
+    // PDF pages are defined in the PDF structure, but we can at least verify it's a valid PDF
+    const pdfHeader = pdfBuffer.slice(0, 8).toString('ascii');
+    console.log('📄 PDF header:', pdfHeader);
     
-    // Load PDF using data URL
-    const dataUrl = `data:application/pdf;base64,${pdfData}`;
-    await printWindow.loadURL(dataUrl);
-    
-    // Wait for PDF to load
-    await new Promise((resolve) => {
-      printWindow.webContents.once('did-finish-load', resolve);
-      setTimeout(resolve, 3000); // Fallback timeout
-    });
-    
-    // Print silently
-    printWindow.webContents.print({
-      silent: true, // CRITICAL: Force silent
-      printBackground: printBackground !== false,
-      deviceName: deviceName || undefined,
-    }, (success, failureReason) => {
-      if (success) {
-        console.log('✅ PDF printed successfully');
-      } else {
-        console.error('❌ PDF print failed:', failureReason);
-      }
+    // Try to extract page dimensions from PDF (basic check)
+    // PDF uses points: 1 point = 1/72 inch
+    // 80mm = 226.77 points = 3.15 inches
+    // A4 = 595.28 × 842 points = 8.27 × 11.69 inches
+    const pdfString = pdfBuffer.toString('latin1');
+    const mediaBoxMatch = pdfString.match(/\/MediaBox\s*\[\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\]/);
+    if (mediaBoxMatch) {
+      const width = parseFloat(mediaBoxMatch[3]) - parseFloat(mediaBoxMatch[1]);
+      const height = parseFloat(mediaBoxMatch[4]) - parseFloat(mediaBoxMatch[2]);
+      const widthInches = width / 72;
+      const heightInches = height / 72;
+      const widthMm = widthInches * 25.4;
+      const heightMm = heightInches * 25.4;
+      console.log('📄 PDF page dimensions detected:', {
+        width: `${width.toFixed(2)} points (${widthInches.toFixed(2)} in / ${widthMm.toFixed(2)} mm)`,
+        height: `${height.toFixed(2)} points (${heightInches.toFixed(2)} in / ${heightMm.toFixed(2)} mm)`,
+        expectedFor80mm: '226.77 points (3.15 in / 80.00 mm)',
+        isCorrectWidth: Math.abs(widthMm - 80) < 5 // Allow 5mm tolerance
+      });
       
-      // Clean up
-      printWindow.close();
+      if (paperSize && (paperSize.toLowerCase().includes('80mm') || paperSize.toLowerCase().includes('80'))) {
+        if (Math.abs(widthMm - 80) >= 5) {
+          console.warn('⚠️ WARNING: PDF width is NOT 80mm! PDF appears to be wrong size.');
+          console.warn('⚠️ This will cause printing issues. PDF should be 80mm (226.77 points) wide.');
+        }
+      }
+    } else {
+      console.warn('⚠️ Could not extract PDF page dimensions from MediaBox');
+    }
+    
+    // Prepare print options for pdf-to-printer
+    const printOptions = {
+      silent: silent !== false, // Use silent mode (default true)
+    };
+    
+    // Only add printer name if it's provided, not empty, and not a placeholder string
+    const trimmedDeviceName = deviceName && typeof deviceName === 'string' ? deviceName.trim() : '';
+    const isPlaceholder = trimmedDeviceName.toLowerCase() === 'default printer' || 
+                         trimmedDeviceName.toLowerCase() === 'default' ||
+                         trimmedDeviceName === '';
+    
+    if (trimmedDeviceName && !isPlaceholder) {
+      printOptions.printer = trimmedDeviceName;
+      console.log('🖨️ Using specific printer:', printOptions.printer);
+    } else {
+      console.log('🖨️ Using default printer (deviceName was:', deviceName, ')');
+    }
+    
+    // Add paper size and thermal printer specific options
+    if (paperSize) {
+      const paperSizeLower = paperSize.toLowerCase();
+      if (paperSizeLower.includes('80mm') || paperSizeLower.includes('80')) {
+        printOptions.paper = '80mm';
+        printOptions.orientation = 'portrait';
+        printOptions.margins = {
+          marginType: 'none' 
+        };
+        console.log('📄 Thermal printer configured: 80mm paper, no scaling, no margins');
+      } else if (paperSizeLower.includes('a4')) {
+        printOptions.paper = 'A4';
+      } else if (paperSizeLower.includes('letter')) {
+        printOptions.paper = 'Letter';
+      }
+      console.log('📄 Paper size configured:', printOptions.paper);
+    }
+    
+    console.log('🖨️ Print options:', JSON.stringify(printOptions, null, 2));
+    
+    // Print using pdf-to-printer library (direct PDF printing, more reliable)
+    try {
+      await ptp.print(tempFilePath, printOptions);
+      console.log('✅ PDF printed successfully to:', printOptions.printer || 'default printer');
+      
+      // Wait before deleting temp file to ensure print job completes
       setTimeout(() => {
         try {
+          if (fs.existsSync(tempFilePath)) {
           fs.unlinkSync(tempFilePath);
+            console.log('🗑️ Temp file deleted after print completion:', tempFilePath);
+          }
         } catch (err) {
-          console.warn('Failed to delete temp file:', err);
+          console.warn('⚠️ Failed to delete temp file:', err.message);
+          // File might still be in use, that's okay - OS will clean it up eventually
         }
-      }, 1000);
-    });
+      }, 10000); // Wait 10 seconds after print job is sent
+      
+    } catch (printError) {
+      console.error('❌ Print job failed:', printError);
+      console.error('   Printer:', printOptions.printer || 'default');
+      throw printError; // Re-throw to be caught by outer try-catch
+    }
     
   } catch (error) {
     console.error('❌ Error printing PDF:', error);
   }
+}
+
+// Handler for printing PDFs silently (print-pdf channel)
+ipcMain.on('print-pdf', async (event, options) => {
+  await handlePrint(options);
+});
+
+// Handler for printing invoices (print-invoice channel)
+ipcMain.on('print-invoice', async (event, options) => {
+  await handlePrint(options);
 });
 
 // Focus window handler
