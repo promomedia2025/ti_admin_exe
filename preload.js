@@ -1,7 +1,46 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-let notificationAudio = null;
-let notificationStopTimer = null;
+// Used when user has selected a specific output device: play in renderer with setSinkId
+let notificationAudioWithDevice = null;
+
+function registerNotificationDeviceListeners() {
+  ipcRenderer.on("play-notification-with-device", async (event, { deviceId, src }) => {
+    console.log("[notification-sound] preload: play-with-device received", { deviceId, src });
+    if (notificationAudioWithDevice) {
+      notificationAudioWithDevice.pause();
+      notificationAudioWithDevice = null;
+    }
+    const audioUrl = src || "app://phone-ringtone-normal-444775.mp3";
+    const audio = new Audio();
+    notificationAudioWithDevice = audio;
+    audio.loop = true;
+    try {
+      if (deviceId) {
+        const supported = typeof audio.getSupportedSinkIds === "function" ? await audio.getSupportedSinkIds() : [];
+        console.log("[notification-sound] preload: setSinkId(", deviceId, "), supported count:", supported?.length ?? 0, supported?.length ? "ids:" : "", supported?.slice(0, 3) ?? "");
+        await audio.setSinkId(deviceId);
+        console.log("[notification-sound] preload: setSinkId ok");
+      } else {
+        console.log("[notification-sound] preload: no deviceId, using default output");
+      }
+      audio.src = audioUrl;
+      await audio.play();
+      console.log("[notification-sound] preload: play() started");
+    } catch (e) {
+      console.warn("[notification-sound] preload: setSinkId/play failed", e?.message ?? e);
+      audio.src = audioUrl;
+      audio.play().catch(() => {});
+    }
+  });
+  ipcRenderer.on("stop-notification", () => {
+    if (notificationAudioWithDevice) {
+      notificationAudioWithDevice.pause();
+      notificationAudioWithDevice.currentTime = 0;
+      notificationAudioWithDevice = null;
+    }
+  });
+}
+registerNotificationDeviceListeners();
 
 contextBridge.exposeInMainWorld("electron", {
   print: (options) => {
@@ -17,105 +56,80 @@ contextBridge.exposeInMainWorld("electron", {
   focusWindow: () => {
     return ipcRenderer.invoke("focus-window");
   },
-  
+
+  // Configure toggle schedules behavior (URL + locationId) from the renderer
+  setToggleConfig: async (url, locationId) => {
+    return ipcRenderer.invoke("set-toggle-config", { url, locationId });
+  },
+
   // Get list of available printers
   getPrinters: async () => {
     return ipcRenderer.invoke("get-printers");
   },
 
-  /**
-   * Play an MP3 notification sound and stop it after 6 seconds (default).
-   * If no src is provided, uses the default phone-ringtone-normal-444775.mp3 file.
-   *
-   * @param {string} [src] - Path to MP3 file (defaults to phone-ringtone-normal-444775.mp3)
-   * @param {number} [durationMs=6000] - Duration to play in milliseconds (default 6 seconds)
-   * @param {number} [volume=1] - Volume level 0-1 (default 1.0)
-   * @returns {Promise<{success: boolean, error?: string}>}
-   *
-   * Examples:
-   * - window.electron.playNotificationSound() // Uses default phone ringtone
-   * - window.electron.playNotificationSound("phone-ringtone-normal-444775.mp3")
-   * - window.electron.playNotificationSound("https://example.com/notify.mp3", 3000, 0.8)
-   */
-  playNotificationSound: async (src, durationMs = 6000, volume = 1) => {
+  // Notification sound output device (for test/configuration)
+  getAudioOutputDevices: async () => {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter((d) => d.kind === "audiooutput");
+  },
+  setNotificationOutputDevice: async (deviceId) => {
+    return ipcRenderer.invoke("set-notification-output-device", deviceId);
+  },
+  getNotificationOutputDevice: async () => {
+    return ipcRenderer.invoke("get-notification-output-device");
+  },
+  /** Play the notification sound once on the given device (for Test button). Requires user gesture in some environments. */
+  playTestNotificationSound: async (deviceId) => {
     try {
-      if (typeof durationMs !== "number" || !Number.isFinite(durationMs)) {
-        durationMs = 6000;
+      console.log("[notification-sound] playTestNotificationSound deviceId:", deviceId ?? "(default)");
+      const audio = new Audio();
+      audio.loop = false;
+      if (deviceId) {
+        const supported = typeof audio.getSupportedSinkIds === "function" ? await audio.getSupportedSinkIds() : [];
+        console.log("[notification-sound] test: setSinkId(", deviceId, "), supported:", supported?.length ?? 0, supported?.includes(deviceId) ? "deviceId in list" : "deviceId NOT in supported list");
+        await audio.setSinkId(deviceId);
+        console.log("[notification-sound] test: setSinkId ok");
       }
-      durationMs = Math.max(0, durationMs);
-
-      if (typeof volume !== "number" || !Number.isFinite(volume)) {
-        volume = 1;
-      }
-      volume = Math.min(1, Math.max(0, volume));
-
-      // Default to the phone ringtone if no src provided
-      if (!src || (typeof src === "string" && src.trim().length === 0)) {
-        src = "phone-ringtone-normal-444775.mp3";
-      }
-
-      // If src is a local filename (not a URL), use app:// protocol
-      let audioSrc = src;
-      if (
-        !src.startsWith("http://") &&
-        !src.startsWith("https://") &&
-        !src.startsWith("file://") &&
-        !src.startsWith("app://")
-      ) {
-        // Use app:// protocol to access local files
-        audioSrc = `app://${src}`;
-      }
-
-      // Reuse a single Audio instance so repeated calls don't leak elements.
-      if (!notificationAudio) {
-        notificationAudio = new Audio();
-        notificationAudio.preload = "auto";
-      }
-
-      // Stop any previous playback/timer.
-      if (notificationStopTimer) {
-        clearTimeout(notificationStopTimer);
-        notificationStopTimer = null;
-      }
-      notificationAudio.pause();
-      notificationAudio.currentTime = 0;
-
-      notificationAudio.volume = volume;
-
-      // Only change src if it's different to avoid unnecessary reloads
-      if (notificationAudio.src !== audioSrc) {
-        notificationAudio.src = audioSrc;
-        // Load the audio first to avoid autoplay issues
-        notificationAudio.load();
-      }
-
-      // Wait for audio to be ready before playing
-      await new Promise((resolve) => {
-        if (notificationAudio.readyState >= 2) {
-          // HAVE_CURRENT_DATA or higher - enough data to play
-          resolve();
-        } else {
-          notificationAudio.addEventListener("canplay", resolve, {
-            once: true,
-          });
-        }
+      audio.src = "app://phone-ringtone-normal-444775.mp3";
+      await audio.play();
+      console.log("[notification-sound] test: play() started");
+      return new Promise((resolve) => {
+        audio.onended = () => resolve({ success: true });
+        audio.onerror = (e) =>
+          resolve({ success: false, error: (e && e.message) || String(e) });
       });
+    } catch (err) {
+      console.warn("[notification-sound] playTestNotificationSound error", err?.message ?? err);
+      return {
+        success: false,
+        error: err && err.message ? err.message : String(err),
+      };
+    }
+  },
 
-      // Play the audio (autoplay is configured at the Electron level)
-      await notificationAudio.play();
+  // Native notification sound via main process (avoids browser autoplay)
+  playNotificationSound: async (src) => {
+    try {
+      const file =
+        src && typeof src === "string" && src.trim().length > 0
+          ? src.trim()
+          : "phone-ringtone-normal-444775.mp3";
+      return await ipcRenderer.invoke("play-notification-sound", file);
+    } catch (err) {
+      return {
+        success: false,
+        error: err && err.message ? err.message : String(err),
+      };
+    }
+  },
 
-      notificationStopTimer = setTimeout(() => {
-        try {
-          notificationAudio.pause();
-          notificationAudio.currentTime = 0;
-        } catch (_) {
-          // ignore
-        } finally {
-          notificationStopTimer = null;
-        }
-      }, durationMs);
-
-      return { success: true };
+  /**
+   * Stop the currently playing notification sound.
+   * Currently a no-op for native playback; kept for API compatibility.
+   */
+  stopNotificationSound: async () => {
+    try {
+      return await ipcRenderer.invoke("stop-notification-sound");
     } catch (err) {
       return {
         success: false,
@@ -129,7 +143,7 @@ contextBridge.exposeInMainWorld("electron", {
     // Send a message to the main process (fire and forget)
     send: (channel, ...args) => {
       // Whitelist channels for security
-      const validChannels = ['window-focus', 'print-pdf', 'print-invoice'];
+      const validChannels = ["window-focus", "print-pdf", "print-invoice"];
       if (validChannels.includes(channel)) {
         ipcRenderer.send(channel, ...args);
       } else {
@@ -140,7 +154,21 @@ contextBridge.exposeInMainWorld("electron", {
     // Invoke a method in the main process and wait for response
     invoke: (channel, ...args) => {
       // Whitelist channels for security
-      const validChannels = ['window-focus', 'focus-window', 'check-for-updates', 'download-update', 'install-update', 'get-printers', 'get-app-version', 'show-about'];
+      const validChannels = [
+        "window-focus",
+        "focus-window",
+        "check-for-updates",
+        "download-update",
+        "install-update",
+        "get-printers",
+        "get-app-version",
+        "show-about",
+        "set-toggle-config",
+        "play-notification-sound",
+        "stop-notification-sound",
+        "set-notification-output-device",
+        "get-notification-output-device",
+      ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, ...args);
       }
@@ -149,7 +177,15 @@ contextBridge.exposeInMainWorld("electron", {
 
     // Listen for messages from main process
     on: (channel, func) => {
-      const validChannels = ['window-focus-response', 'autofill-data', 'update-available', 'update-not-available', 'update-error', 'download-progress', 'update-downloaded'];
+      const validChannels = [
+        "window-focus-response",
+        "autofill-data",
+        "update-available",
+        "update-not-available",
+        "update-error",
+        "download-progress",
+        "update-downloaded",
+      ];
       if (validChannels.includes(channel)) {
         ipcRenderer.on(channel, (event, ...args) => func(...args));
       }
@@ -165,48 +201,54 @@ contextBridge.exposeInMainWorld("electron", {
   updater: {
     // Check for updates
     checkForUpdates: () => {
-      return ipcRenderer.invoke('check-for-updates');
+      return ipcRenderer.invoke("check-for-updates");
     },
-    
+
     // Download update
     downloadUpdate: () => {
-      return ipcRenderer.invoke('download-update');
+      return ipcRenderer.invoke("download-update");
     },
-    
+
     // Install update (will restart app)
     installUpdate: () => {
-      return ipcRenderer.invoke('install-update');
+      return ipcRenderer.invoke("install-update");
     },
-    
+
     // Listen for update events
     onUpdateAvailable: (callback) => {
-      ipcRenderer.on('update-available', (event, info) => callback(info));
+      ipcRenderer.on("update-available", (event, info) => callback(info));
     },
-    
+
     onUpdateNotAvailable: (callback) => {
-      ipcRenderer.on('update-not-available', () => callback());
+      ipcRenderer.on("update-not-available", () => callback());
     },
-    
+
     onUpdateError: (callback) => {
-      ipcRenderer.on('update-error', (event, error) => callback(error));
+      ipcRenderer.on("update-error", (event, error) => callback(error));
     },
-    
+
     onDownloadProgress: (callback) => {
-      ipcRenderer.on('download-progress', (event, progress) => callback(progress));
+      ipcRenderer.on("download-progress", (event, progress) =>
+        callback(progress),
+      );
     },
-    
+
     onUpdateDownloaded: (callback) => {
-      ipcRenderer.on('update-downloaded', (event, info) => callback(info));
+      ipcRenderer.on("update-downloaded", (event, info) => callback(info));
     },
   },
 
   // Get app version information
   getAppVersion: async () => {
-    return ipcRenderer.invoke('get-app-version');
+    return ipcRenderer.invoke("get-app-version");
   },
 
   // Show About dialog
   showAbout: async () => {
-    return ipcRenderer.invoke('show-about');
+    return ipcRenderer.invoke("show-about");
+  },
+
+  toggleSchedules: async (status, url, locationId) => {
+    return ipcRenderer.invoke("toggle-schedules", { status, url, locationId });
   },
 });
